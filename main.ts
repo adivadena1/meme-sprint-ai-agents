@@ -50,6 +50,42 @@ if (tail.readUInt32BE(0) !== 0 || !tail.subarray(4, 8).equals(Buffer.from("IEND"
   throw new Error("entry.png does not end with a whole IEND chunk (truncated file?)");
 }
 
+// Walk every chunk from offset 8: each chunk is 4-byte length + 4-byte
+// type + length bytes of data + 4-byte CRC. Require the first chunk to be
+// IHDR, at least one IDAT chunk before IEND (a PNG with IHDR and IEND but
+// no image data is not a picture), and IEND as the last chunk. This also
+// rejects trailing garbage and a chunk length that runs past the file end.
+let offset = 8;
+let first = true;
+let seenIdat = false;
+let sawIend = false;
+while (offset + 8 <= bytes.length) {
+  const chunkLen = bytes.readUInt32BE(offset);
+  const chunkType = bytes.subarray(offset + 4, offset + 8).toString("ascii");
+  if (offset + 12 + chunkLen > bytes.length) {
+    throw new Error(`entry.png chunk ${chunkType} at offset ${offset} runs past the end of the file`);
+  }
+  if (first && chunkType !== "IHDR") {
+    throw new Error("entry.png does not start with an IHDR chunk");
+  }
+  first = false;
+  if (chunkType === "IDAT") seenIdat = true;
+  if (chunkType === "IEND") {
+    if (chunkLen !== 0 || offset + 12 !== bytes.length) {
+      throw new Error("entry.png IEND chunk is not the last chunk");
+    }
+    sawIend = true;
+    break;
+  }
+  offset += 12 + chunkLen;
+}
+if (!sawIend) {
+  throw new Error("entry.png does not end with a whole IEND chunk (truncated file?)");
+}
+if (!seenIdat) {
+  throw new Error("entry.png has no IDAT chunk (no image data)");
+}
+
 mkdirSync(outDir, { recursive: true });
 copyFileSync(src, dst);
 
